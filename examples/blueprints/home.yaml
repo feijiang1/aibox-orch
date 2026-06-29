@@ -1,0 +1,74 @@
+# NG AI Box - "home" blueprint (single-node Auto/Home profile).
+#
+# Demonstrates all four isolation tiers selected the k8s-idiomatic way:
+#   - default (no runtimeClassName)  -> container tier (containerd + runc)
+#   - runtimeClassName: kata         -> KATA lightweight VM (untrusted code, FR-2)
+#   - runtimeClassName: acrn         -> ACRN Secure VM (security-sensitive tenants)
+#   - annotation aibox.io/tier: native -> host process (trusted, host-coupled)
+apiVersion: aibox.io/v1
+kind: Blueprint
+metadata:
+  name: home
+spec:
+  workloads:
+    # IMA inference engine (container tier).
+    - metadata:
+        name: ima
+        labels: { component: ima }
+      spec:
+        containers:
+          - name: ima
+            image: docker.io/library/busybox:latest
+            command: ["sh", "-c", "echo IMA up; sleep 3600"]
+            resources:
+              limits:
+                cpu: "2"
+                memory: 2Gi
+                aibox.io/npu: "1"
+
+    # OpenClaw agent framework (container tier), depends on IMA being ready.
+    - metadata:
+        name: openclaw
+        labels: { component: openclaw }
+      spec:
+        dependsOn: [ima]
+        containers:
+          - name: openclaw
+            image: docker.io/library/busybox:latest
+            command: ["sh", "-c", "echo OpenClaw up; sleep 3600"]
+            resources:
+              limits:
+                cpu: "1"
+                memory: 1Gi
+                aibox.io/gpu: shared
+
+    # Sandboxed third-party code execution -> KATA isolation (FR-2).
+    - metadata:
+        name: sandbox-exec
+      spec:
+        runtimeClassName: kata
+        containers:
+          - name: sandbox
+            image: docker.io/library/busybox:latest
+            command: ["sh", "-c", "echo sandbox up; sleep 3600"]
+
+    # Credential vault -> ACRN Secure VM.
+    - metadata:
+        name: credential-vault
+      spec:
+        runtimeClassName: acrn
+        containers:
+          - name: vault
+            image: docker.io/library/busybox:latest
+            command: ["sh", "-c", "echo vault up; sleep 3600"]
+
+    # Local device shim -> native host process (trusted).
+    - metadata:
+        name: device-shim
+        annotations:
+          aibox.io/tier: native
+      spec:
+        containers:
+          - name: shim
+            image: ignored-for-native
+            command: ["sleep", "3600"]
